@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { basename } from 'node:path';
 import pkg from '../../package.json';
 import { runMigrate } from './commands/migrate';
 import { runKillCli, runPs } from './commands/ps';
@@ -8,6 +9,7 @@ import {
   runSecretsRemove,
   runSecretsSet,
 } from './commands/secrets';
+import { configureInstance } from '../config/paths';
 import {
   runServiceRestart,
   runServiceStart,
@@ -20,7 +22,7 @@ import { runStart } from './commands/start';
 const program = new Command();
 
 program
-  .name('lark-channel-bridge')
+  .name(basename(process.argv[1] ?? 'lark-channel-bridge', '.mjs'))
   .description('Bridge Feishu/Lark messenger with local CLI coding agents')
   .version(pkg.version, '-v, --version');
 
@@ -30,8 +32,10 @@ program
   .command('run')
   .description('Run the bridge in the foreground (was `start` in older versions)')
   .option('-c, --config <path>', 'path to config file')
+  .option('--instance <name>', 'named bridge instance (separate config/session/service)')
   .option('--skip-check-lark-cli', 'skip lark-cli pre-flight check (auto-install + bind)')
-  .action(async (opts: { config?: string; skipCheckLarkCli?: boolean }) => {
+  .action(async (opts: { config?: string; instance?: string; skipCheckLarkCli?: boolean }) => {
+    configureInstance(opts.instance);
     await runStart(opts);
   });
 
@@ -54,36 +58,46 @@ program
 program
   .command('start')
   .description('Install (if needed) and start the bridge as an OS-managed daemon')
+  .option('--instance <name>', 'named bridge instance (separate config/session/service)')
   .option('--skip-check-lark-cli', 'skip lark-cli pre-flight check (auto-install + bind)')
-  .action(async (opts: { skipCheckLarkCli?: boolean }) => {
+  .action(async (opts: { instance?: string; skipCheckLarkCli?: boolean }) => {
+    configureInstance(opts.instance);
     await runServiceStart(opts);
   });
 
 program
   .command('stop')
   .description('Stop the OS-managed daemon (unload from launchd; plist stays)')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runServiceStop();
   });
 
 program
   .command('restart')
   .description('Restart the OS-managed daemon')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runServiceRestart();
   });
 
 program
   .command('status')
   .description('Show OS service status (pid, last exit, log paths)')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runServiceStatus();
   });
 
 program
   .command('unregister')
   .description('Remove the OS service registration (bootout + delete plist)')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runServiceUnregister();
   });
 
@@ -94,7 +108,9 @@ const secrets = program
 secrets
   .command('get')
   .description('Exec-provider protocol: read JSON request from stdin, write JSON response to stdout. Used by lark-cli config bind --source lark-channel.')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runSecretsGet();
   });
 
@@ -102,14 +118,18 @@ secrets
   .command('set')
   .description('Encrypt and store an App Secret. Prompts for the secret without echoing.')
   .requiredOption('--app-id <id>', 'App ID (e.g. cli_xxxxxxxxxxxx)')
-  .action(async (opts: { appId: string }) => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { appId: string; instance?: string }) => {
+    configureInstance(opts.instance);
     await runSecretsSet(opts.appId);
   });
 
 secrets
   .command('list')
   .description('List the IDs of secrets in the encrypted keystore (no secrets shown)')
-  .action(async () => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { instance?: string }) => {
+    configureInstance(opts.instance);
     await runSecretsList();
   });
 
@@ -117,7 +137,9 @@ secrets
   .command('remove')
   .description('Delete an entry from the encrypted keystore')
   .requiredOption('--app-id <id>', 'App ID to remove')
-  .action(async (opts: { appId: string }) => {
+  .option('--instance <name>', 'named bridge instance')
+  .action(async (opts: { appId: string; instance?: string }) => {
+    configureInstance(opts.instance);
     await runSecretsRemove(opts.appId);
   });
 

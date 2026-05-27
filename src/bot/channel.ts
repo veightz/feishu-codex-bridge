@@ -5,7 +5,7 @@ import type {
   NormalizedMessage,
 } from '@larksuiteoapi/node-sdk';
 import { Domain, LoggerLevel, createLarkChannel } from '@larksuiteoapi/node-sdk';
-import type { AgentAdapter } from '../agent/types';
+import type { AgentRegistry } from '../agent/registry';
 import { handleCardAction } from '../card/dispatcher';
 import { renderCard } from '../card/run-renderer';
 import {
@@ -18,7 +18,7 @@ import {
 } from '../card/run-state';
 import { renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
-import type { AppConfig } from '../config/schema';
+import type { AgentId, AppConfig } from '../config/schema';
 import {
   getAgentStopGraceMs,
   getMaxConcurrentRuns,
@@ -111,14 +111,15 @@ export interface BridgeChannel {
 
 export interface StartChannelDeps {
   cfg: AppConfig;
-  agent: AgentAdapter;
+  agents: AgentRegistry;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   controls: Controls;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
-  const { cfg, agent, sessions, workspaces, controls } = deps;
+  const { cfg, agents, sessions, workspaces, controls } = deps;
+  const defaultAgent = agents.get(agents.getDefaultId());
   const activeRuns = new ActiveRuns();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
@@ -193,7 +194,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         const mode = await chatModeCache.resolve(channel, firstMsg.chatId);
         await runAgentBatch({
           channel,
-          agent,
+          agents,
           sessions,
           workspaces,
           activeRuns,
@@ -221,7 +222,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
         intakeMessage({
           channel,
-          agent,
+          agents,
           sessions,
           workspaces,
           activeRuns,
@@ -243,7 +244,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessions,
           workspaces,
           activeRuns,
-          agent,
+          agents,
           controls,
           pending,
           chatModeCache,
@@ -252,7 +253,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     },
     comment: async (evt) => {
       await withTrace({ chatId: 'comment' }, async () => {
-        await handleCommentMention({ channel, evt, agent, sessions, workspaces }).catch((err) =>
+        await handleCommentMention({ channel, evt, agent: defaultAgent, sessions, workspaces }).catch((err) =>
           log.fail('comment', err),
         );
       }).catch((err) => log.fail('comment', err));
@@ -297,7 +298,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   log.info('ws', 'connected', {
     bot: identity?.name ?? 'unknown',
     openId: identity?.openId ?? '-',
-    agent: `${agent.displayName} (${agent.id})`,
+    agent: `${defaultAgent.displayName} (${defaultAgent.id})`,
     appId: cfg.accounts.app.id,
     procId: controls.processId,
   });
@@ -330,7 +331,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
 interface IntakeDeps {
   channel: LarkChannel;
-  agent: AgentAdapter;
+  agents: AgentRegistry;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -343,7 +344,7 @@ interface IntakeDeps {
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
   const {
     channel,
-    agent,
+    agents,
     sessions,
     workspaces,
     activeRuns,
@@ -413,7 +414,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     chatMode,
     sessions,
     workspaces,
-    agent,
+    agents,
     activeRuns,
     controls,
   });
@@ -429,7 +430,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 
 interface RunBatchDeps {
   channel: LarkChannel;
-  agent: AgentAdapter;
+  agents: AgentRegistry;
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -443,7 +444,7 @@ interface RunBatchDeps {
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const {
     channel,
-    agent,
+    agents,
     sessions,
     workspaces,
     activeRuns,
@@ -493,21 +494,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
-  const prompt = buildPrompt(batch, attachments, quotes);
-  log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
-
   const cwd = workspaces.cwdFor(scope) ?? homedir();
-  const resumeFrom = sessions.resumeFor(scope, cwd);
+  const agentId = sessions.getActiveAgentId(scope, agents.getDefaultId());
+  const agent = agents.get(agentId);
+  const resumeFrom = sessions.resumeForAgent(scope, cwd, agentId);
+  const basePrompt = buildPrompt(batch, attachments, quotes);
+  const nativeUpdatedAt = sessions.getRaw(scope)?.agents?.[agentId]?.updatedAt;
+  const prompt = `${sessions.transcriptPrompt(scope, nativeUpdatedAt)}${basePrompt}`;
+  log.info('prompt', 'built', {
+    agent: agentId,
+    promptChars: prompt.length,
+    quotes: quotes.length,
+    withTranscript: !resumeFrom && prompt !== basePrompt,
+  });
   if (resumeFrom) {
-    log.info('session', 'resume', { sessionId: resumeFrom, cwd });
+    log.info('session', 'resume', { agent: agentId, sessionId: resumeFrom, cwd });
   } else {
-    const stale = sessions.getRaw(scope);
-    if (stale && stale.cwd !== cwd) {
-      log.info('session', 'stale-cleared', { staleCwd: stale.cwd, newCwd: cwd });
-      sessions.clear(scope);
-    } else {
-      log.info('session', 'fresh', { cwd });
-    }
+    log.info('session', 'fresh', { agent: agentId, cwd });
   }
 
   const run = agent.run({
@@ -565,9 +568,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           card: {
             initial: renderCard(initialState),
             producer: async (ctrl) => {
-              await processAgentStream(handle, sessions, scope, cwd, idleTimeoutMs, async (state) => {
+              const finalState = await processAgentStream(handle, sessions, scope, agentId, cwd, idleTimeoutMs, async (state) => {
                 await ctrl.update(renderCard(filterForPrefs(state)));
               });
+              rememberTurn(sessions, scope, agentId, basePrompt, finalState);
             },
           },
         },
@@ -578,9 +582,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         {
           markdown: async (ctrl) => {
-            await processAgentStream(handle, sessions, scope, cwd, idleTimeoutMs, async (state) => {
+            const finalState = await processAgentStream(handle, sessions, scope, agentId, cwd, idleTimeoutMs, async (state) => {
               await ctrl.setContent(renderText(filterForPrefs(state)));
             });
+            rememberTurn(sessions, scope, agentId, basePrompt, finalState);
           },
         },
         sendOpts,
@@ -589,14 +594,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
       // (msg_type=post) message — no card, no streaming, no typewriter.
-      let finalState: RunState = initialState;
-      await processAgentStream(handle, sessions, scope, cwd, idleTimeoutMs, async (state) => {
-        finalState = state;
-      });
+      const finalState = await processAgentStream(handle, sessions, scope, agentId, cwd, idleTimeoutMs, async () => {});
       const body = renderText(filterForPrefs(finalState));
       if (body.trim()) {
         await channel.send(chatId, { markdown: body }, sendOpts);
       }
+      rememberTurn(sessions, scope, agentId, basePrompt, finalState);
     }
   } catch (err) {
     log.fail('stream', err);
@@ -617,10 +620,11 @@ async function processAgentStream(
   handle: RunHandle,
   sessions: SessionStore,
   scope: string,
+  agentId: AgentId,
   cwd: string,
   idleTimeoutMs: number | undefined,
   flush: (state: RunState) => Promise<void>,
-): Promise<void> {
+): Promise<RunState> {
   let state: RunState = initialState;
 
   // Idle watchdog: claude going silent for `idleTimeoutMs` is treated as
@@ -678,8 +682,8 @@ async function processAgentStream(
       if (evt.type === 'system') {
         if (evt.sessionId) {
           const effectiveCwd = evt.cwd ?? cwd;
-          sessions.set(scope, evt.sessionId, effectiveCwd);
-          log.info('session', 'set', { sessionId: evt.sessionId });
+          sessions.setForAgent(scope, agentId, evt.sessionId, effectiveCwd);
+          log.info('session', 'set', { agent: agentId, sessionId: evt.sessionId });
         }
         continue;
       }
@@ -721,7 +725,7 @@ async function processAgentStream(
   }
   log.info('card', 'final', { terminal: state.terminal, interrupted: handle.interrupted });
   await flush(state);
-    // Reap the subprocess. Two regimes:
+  // Reap the subprocess. Two regimes:
   //  - Interrupted (user /stop, idle watchdog, disconnect): stop() was already
   //    fire-and-forgotten by whoever set handle.interrupted; this awaits it.
   //  - Natural done: stream-json emits `result` ~1ms before claude actually
@@ -736,6 +740,7 @@ async function processAgentStream(
       await handle.run.stop();
     }
   }
+  return state;
 }
 
 /**
@@ -745,6 +750,23 @@ async function processAgentStream(
  * a stall (the card has already rendered terminal state by this point).
  */
 const POST_DONE_EXIT_GRACE_MS = 2000;
+
+function rememberTurn(
+  sessions: SessionStore,
+  scope: string,
+  agentId: AgentId,
+  prompt: string,
+  state: RunState,
+): void {
+  if (state.terminal !== 'done') return;
+  const assistant = state.blocks
+    .filter((b) => b.kind === 'text')
+    .map((b) => b.content)
+    .join('\n\n')
+    .trim();
+  if (!assistant) return;
+  sessions.appendTurn(scope, agentId, prompt, assistant);
+}
 
 /**
  * For interactive-card messages the SDK flattens to text-bearing nodes or
@@ -822,4 +844,3 @@ function stripAttachmentRefs(text: string, fileKeys: string[]): string {
   }
   return out.replace(/\n{3,}/g, '\n\n');
 }
-

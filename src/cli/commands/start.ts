@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import { createInterface } from 'node:readline';
 import pkg from '../../../package.json';
-import { ClaudeAdapter } from '../../agent/claude/adapter';
+import { AgentRegistry } from '../../agent/registry';
 import { startChannel, type BridgeChannel } from '../../bot/channel';
 import { runRegistrationWizard } from '../../bot/wizard';
 import type { Controls } from '../../commands';
@@ -52,6 +52,7 @@ const MEDIA_GC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export interface StartOptions {
   config?: string;
   skipCheckLarkCli?: boolean;
+  instance?: string;
 }
 
 export async function runStart(opts: StartOptions): Promise<void> {
@@ -76,10 +77,13 @@ export async function runStart(opts: StartOptions): Promise<void> {
 
   await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli });
 
-  const agent = new ClaudeAdapter();
-  if (!(await agent.isAvailable())) {
-    console.error('✗ 未找到 claude CLI。请先安装 Claude Code：');
-    console.error('  https://docs.anthropic.com/en/docs/claude-code/quickstart');
+  const agents = new AgentRegistry(cfg);
+  const defaultAgent = agents.get(agents.getDefaultId());
+  if (!(await defaultAgent.isAvailable())) {
+    console.error(`✗ 未找到默认 agent CLI: ${defaultAgent.displayName} (${defaultAgent.id})。`);
+    console.error(defaultAgent.id === 'claude'
+      ? '  请先安装 Claude Code：https://docs.anthropic.com/en/docs/claude-code/quickstart'
+      : '  请先安装并登录 Codex CLI：codex login');
     process.exit(1);
   }
 
@@ -111,6 +115,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
     tenant: cfg.accounts.app.tenant,
     configPath,
     version: pkg.version,
+    agentId: agents.getDefaultId(),
   });
   log.info('registry', 'registered', { id: entry.id, pid: process.pid });
 
@@ -158,9 +163,10 @@ export async function runStart(opts: StartOptions): Promise<void> {
         // this ordering, a failed restart would tear down the only
         // keepalive in the process and the bot would never recover until
         // someone manually restarts it.
+        const nextAgents = new AgentRegistry(next);
         const next_bridge = await startChannel({
           cfg: next,
-          agent,
+          agents: nextAgents,
           sessions,
           workspaces,
           controls,
@@ -180,6 +186,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
           tenant: next.accounts.app.tenant,
           configPath,
           botName: bridge.channel.botIdentity?.name,
+          agentId: nextAgents.getDefaultId(),
         }).catch((err) =>
           log.warn('registry', 'update-failed', { err: String(err) }),
         );
@@ -190,14 +197,14 @@ export async function runStart(opts: StartOptions): Promise<void> {
     },
   };
 
-  bridge = await startChannel({ cfg, agent, sessions, workspaces, controls });
+  bridge = await startChannel({ cfg, agents, sessions, workspaces, controls });
 
   // Backfill the bot's display name into the registry once WS handshake is
   // done — future starts conflicting on this app can show it in the prompt
   // ("bot 尼莫 (cli_xxx)") instead of just a short id.
   const botName = bridge.channel.botIdentity?.name;
   if (botName) {
-    await updateEntry(entry.id, { botName }).catch((err) =>
+    await updateEntry(entry.id, { botName, agentId: agents.getDefaultId() }).catch((err) =>
       log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
     );
   }
@@ -299,6 +306,7 @@ async function maybeMigratePlaintextSecret(
         cfg.accounts.app.id,
         cfg.accounts.app.tenant,
         cfg.preferences,
+        cfg.agent,
       );
       await setSecret(secretKeyForApp(cfg.accounts.app.id), s);
       await saveConfig(next, configPath);
@@ -330,6 +338,7 @@ async function maybeMigratePlaintextSecret(
         cfg.accounts.app.id,
         cfg.accounts.app.tenant,
         cfg.preferences,
+        cfg.agent,
       );
       await saveConfig(next, configPath);
       console.log('🔒 已把 secrets provider 切到 wrapper 形态');
@@ -363,9 +372,9 @@ async function persistEncrypted(cfg: AppConfig, configPath: string): Promise<App
     cfg.accounts.app.id,
     cfg.accounts.app.tenant,
     cfg.preferences,
+    cfg.agent,
   );
   await setSecret(secretKeyForApp(cfg.accounts.app.id), s);
   await saveConfig(next, configPath);
   return next;
 }
-

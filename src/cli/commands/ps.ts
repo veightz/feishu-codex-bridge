@@ -21,12 +21,23 @@ export function runPs(): void {
       idx: String(idx + 1),
       id: e.id,
       pid: String(e.pid),
+      instance: e.instance ?? 'default',
       app,
+      agent: e.agentId ?? '-',
       started: ago,
       version: e.version,
     };
   });
-  const headers = { idx: '#', id: 'ID', pid: 'PID', app: 'Bot', started: '启动', version: '版本' };
+  const headers = {
+    idx: '#',
+    id: 'ID',
+    pid: 'PID',
+    instance: '实例',
+    app: 'Bot',
+    agent: 'Agent',
+    started: '启动',
+    version: '版本',
+  };
   printTable([headers, ...rows]);
 }
 

@@ -4,7 +4,8 @@
   "description": "Bridge Feishu/Lark messenger with local CLI coding agents (Claude Code, ...)",
   "type": "module",
   "bin": {
-    "lark-channel-bridge": "./bin/lark-channel-bridge.mjs"
+    "lark-channel-bridge": "./bin/lark-channel-bridge.mjs",
+    "feishu-codex-bridge": "./bin/feishu-codex-bridge.mjs"
   },
   "exports": {
     ".": {

@@ -1,5 +1,5 @@
 import * as launchd from './launchd';
-import { WINDOWS_TASK_NAME, launchAgentPlistPath, systemdUnitPath } from './paths';
+import { launchAgentPlistPath, systemdUnitPath, windowsTaskName } from './paths';
 import * as schtasks from './schtasks';
 import * as systemd from './systemd';
 
@@ -124,7 +124,7 @@ function makeSchtasksAdapter(): ServiceAdapter {
     // Windows doesn't have a single "service file" — there's the task
     // registration (queryable via schtasks) and the launcher .cmd we wrote.
     // The task name is what the user would search for in Task Scheduler UI.
-    servicePath: () => WINDOWS_TASK_NAME,
+    servicePath: () => windowsTaskName(),
     install: async () => {
       const r = await schtasks.installTask();
       if (!r.ok) throw new Error(r.stderr || 'schtasks /Create failed');

@@ -3,12 +3,13 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
-  SYSTEMD_UNIT_NAME,
   daemonLogDir,
   daemonStderrPath,
   daemonStdoutPath,
+  systemdUnitName,
   systemdUnitPath,
 } from './paths';
+import { getInstance } from '../config/paths';
 
 export interface UnitInputs {
   /** Absolute path to the node binary that should run the bridge. */
@@ -36,6 +37,8 @@ export interface UnitInputs {
  */
 export function buildUnit(inputs: UnitInputs): string {
   const escape = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const instance = getInstance();
+  const instanceArgs = instance ? ` --instance "${escape(instance)}"` : '';
   return `[Unit]
 Description=Lark Channel Bridge bot
 After=network-online.target
@@ -43,7 +46,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart="${escape(inputs.nodePath)}" "${escape(inputs.bridgeEntryPath)}" run
+ExecStart="${escape(inputs.nodePath)}" "${escape(inputs.bridgeEntryPath)}" run${instanceArgs}
 Restart=always
 RestartSec=5
 StandardOutput=append:${daemonStdoutPath()}
@@ -97,22 +100,22 @@ export function daemonReload(): SystemctlResult {
 
 /** Enable autostart on login + start now. Equivalent to launchd bootstrap. */
 export function enableAndStart(): SystemctlResult {
-  return runSystemctl(['enable', '--now', SYSTEMD_UNIT_NAME]);
+  return runSystemctl(['enable', '--now', systemdUnitName()]);
 }
 
 /** Stop now (service stays enabled — will auto-start on next boot). */
 export function stop(): SystemctlResult {
-  return runSystemctl(['stop', SYSTEMD_UNIT_NAME]);
+  return runSystemctl(['stop', systemdUnitName()]);
 }
 
 /** Disable autostart + stop now. Used by `unregister` flow. */
 export function disableAndStop(): SystemctlResult {
-  return runSystemctl(['disable', '--now', SYSTEMD_UNIT_NAME]);
+  return runSystemctl(['disable', '--now', systemdUnitName()]);
 }
 
 /** Bounce the service in place. */
 export function restart(): SystemctlResult {
-  return runSystemctl(['restart', SYSTEMD_UNIT_NAME]);
+  return runSystemctl(['restart', systemdUnitName()]);
 }
 
 /**
@@ -120,7 +123,7 @@ export function restart(): SystemctlResult {
  * both yield non-zero (and the failure reason lands in stdout, not stderr).
  */
 export function isActive(): boolean {
-  const r = spawnSync('systemctl', ['--user', 'is-active', SYSTEMD_UNIT_NAME], {
+  const r = spawnSync('systemctl', ['--user', 'is-active', systemdUnitName()], {
     stdio: ['ignore', 'ignore', 'ignore'],
   });
   return r.status === 0;
@@ -128,7 +131,7 @@ export function isActive(): boolean {
 
 /** Raw `systemctl status` output, parsed downstream for pid / exit code. */
 export function describeService(): string {
-  const r = runSystemctl(['status', SYSTEMD_UNIT_NAME, '--no-pager']);
+  const r = runSystemctl(['status', systemdUnitName(), '--no-pager']);
   return r.stdout || r.stderr || '';
 }
 

@@ -3,12 +3,13 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
-  WINDOWS_TASK_NAME,
   daemonLogDir,
   daemonStderrPath,
   daemonStdoutPath,
+  windowsTaskName,
   windowsLauncherCmdPath,
 } from './paths';
+import { getInstance } from '../config/paths';
 
 export interface LauncherInputs {
   /** Absolute path to node.exe. */
@@ -32,10 +33,12 @@ export interface LauncherInputs {
  * daemon restarts.
  */
 export function buildLauncherCmd(inputs: LauncherInputs): string {
+  const instance = getInstance();
+  const instanceArgs = instance ? ` --instance "${instance}"` : '';
   return [
     '@echo off',
     `set "PATH=${inputs.envPath}"`,
-    `"${inputs.nodePath}" "${inputs.bridgeEntryPath}" run >> "${daemonStdoutPath()}" 2>> "${daemonStderrPath()}"`,
+    `"${inputs.nodePath}" "${inputs.bridgeEntryPath}" run${instanceArgs} >> "${daemonStdoutPath()}" 2>> "${daemonStderrPath()}"`,
     '',
   ].join('\r\n');
 }
@@ -89,7 +92,7 @@ export async function installTask(): Promise<SchtasksResult> {
     '/RL',
     'LIMITED',
     '/TN',
-    WINDOWS_TASK_NAME,
+    windowsTaskName(),
     '/TR',
     `"${windowsLauncherCmdPath()}"`,
   ]);
@@ -97,23 +100,23 @@ export async function installTask(): Promise<SchtasksResult> {
 
 /** Start the task now (regardless of trigger). */
 export function runTask(): SchtasksResult {
-  return runSchtasks(['/Run', '/TN', WINDOWS_TASK_NAME]);
+  return runSchtasks(['/Run', '/TN', windowsTaskName()]);
 }
 
 /** End the running instance. Task stays registered for next logon. */
 export function endTask(): SchtasksResult {
-  return runSchtasks(['/End', '/TN', WINDOWS_TASK_NAME]);
+  return runSchtasks(['/End', '/TN', windowsTaskName()]);
 }
 
 /** Disable autostart (task stays registered but ONLOGON trigger won't fire). */
 export function disableTask(): SchtasksResult {
-  return runSchtasks(['/Change', '/TN', WINDOWS_TASK_NAME, '/Disable']);
+  return runSchtasks(['/Change', '/TN', windowsTaskName(), '/Disable']);
 }
 
 /** Re-enable autostart. Called from installTask is unnecessary — /Create /F
  * resets the enabled flag. Only needed if you Disabled and want it back. */
 export function enableTask(): SchtasksResult {
-  return runSchtasks(['/Change', '/TN', WINDOWS_TASK_NAME, '/Enable']);
+  return runSchtasks(['/Change', '/TN', windowsTaskName(), '/Enable']);
 }
 
 /** End + disable. The cross-platform "stop = stay stopped" semantic. */
@@ -138,7 +141,7 @@ export async function restartTask(): Promise<SchtasksResult> {
  * output (it's verbose); use describeTask for full state.
  */
 export function isTaskRegistered(): boolean {
-  const r = spawnSync('schtasks', ['/Query', '/TN', WINDOWS_TASK_NAME], {
+  const r = spawnSync('schtasks', ['/Query', '/TN', windowsTaskName()], {
     stdio: ['ignore', 'ignore', 'ignore'],
   });
   return r.status === 0;
@@ -150,13 +153,13 @@ export function isTaskRegistered(): boolean {
  * "Ready" (registered, not currently running) and "Disabled".
  */
 export function isTaskRunning(): boolean {
-  const r = runSchtasks(['/Query', '/V', '/FO', 'LIST', '/TN', WINDOWS_TASK_NAME]);
+  const r = runSchtasks(['/Query', '/V', '/FO', 'LIST', '/TN', windowsTaskName()]);
   if (!r.ok) return false;
   return /Status:\s+Running/i.test(r.stdout);
 }
 
 export function describeTask(): string {
-  const r = runSchtasks(['/Query', '/V', '/FO', 'LIST', '/TN', WINDOWS_TASK_NAME]);
+  const r = runSchtasks(['/Query', '/V', '/FO', 'LIST', '/TN', windowsTaskName()]);
   return r.stdout || r.stderr || '';
 }
 
@@ -170,7 +173,7 @@ export async function waitUntilStopped(timeoutMs = 5000): Promise<boolean> {
 }
 
 export async function deleteTask(): Promise<SchtasksResult> {
-  const r = runSchtasks(['/Delete', '/F', '/TN', WINDOWS_TASK_NAME]);
+  const r = runSchtasks(['/Delete', '/F', '/TN', windowsTaskName()]);
   // Remove the launcher script too; best-effort.
   if (existsSync(windowsLauncherCmdPath())) {
     await rm(windowsLauncherCmdPath(), { force: true });

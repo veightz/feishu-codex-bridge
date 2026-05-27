@@ -67,6 +67,27 @@ export interface SecretsConfig {
  * `markdown`. See `messageReplyMigrated` for the auto-coercion logic.
  */
 export type MessageReplyMode = 'card' | 'markdown' | 'text';
+export type AgentId = 'claude' | 'codex';
+
+export interface ClaudeAgentConfig {
+  binary?: string;
+  model?: string;
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+}
+
+export interface CodexAgentConfig {
+  binary?: string;
+  model?: string;
+  profile?: string;
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  dangerouslyBypassApprovalsAndSandbox?: boolean;
+}
+
+export interface AgentConfig {
+  default?: AgentId;
+  claude?: ClaudeAgentConfig;
+  codex?: CodexAgentConfig;
+}
 
 /**
  * Access control settings. All three lists default to "no restriction" when
@@ -157,6 +178,11 @@ export interface AppConfig {
   };
   secrets?: SecretsConfig;
   preferences?: AppPreferences;
+  agent?: AgentConfig;
+}
+
+export function getDefaultAgentId(cfg: AppConfig): AgentId {
+  return cfg.agent?.default === 'codex' ? 'codex' : 'claude';
 }
 
 export function isComplete(cfg: Partial<AppConfig>): cfg is AppConfig {

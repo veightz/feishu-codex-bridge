@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import type { LarkChannel, NormalizedMessage } from '@larksuiteoapi/node-sdk';
-import type { AgentAdapter } from '../agent/types';
+import { isAgentId, type AgentRegistry } from '../agent/registry';
 import type { ActiveRuns } from '../bot/active-runs';
 import {
   accountCurrentCard,
@@ -15,6 +15,7 @@ import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templa
 import type { AppConfig, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   getAgentStopGraceMs,
+  getDefaultAgentId,
   getMaxConcurrentRuns,
   getMessageReplyMode,
   getRequireMentionInGroup,
@@ -34,7 +35,7 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatRelTime, listRecentSessions } from '../session/history';
+import { formatRelTime, listRecentAgentSessions } from '../session/history';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { SessionStore } from '../session/store';
 import { validateAppCredentials } from '../utils/feishu-auth';
@@ -73,7 +74,7 @@ export interface CommandContext {
   chatMode: 'p2p' | 'group' | 'topic';
   sessions: SessionStore;
   workspaces: WorkspaceStore;
-  agent: AgentAdapter;
+  agents: AgentRegistry;
   activeRuns: ActiveRuns;
   controls: Controls;
   /** Set when invoked from a CardKit 2.0 form submit. Keys are input `name`s. */
@@ -98,6 +99,7 @@ const handlers: Record<string, Handler> = {
   '/config': handleConfig,
   '/stop': handleStop,
   '/timeout': handleTimeout,
+  '/agent': handleAgent,
   '/ps': handlePs,
   '/exit': handleExit,
   '/doctor': handleDoctor,
@@ -118,6 +120,7 @@ const ADMIN_COMMANDS = new Set([
   '/doctor',
   '/cd',
   '/ws',
+  '/agent',
 ]);
 
 function isAdminCommand(cmd: string): boolean {
@@ -357,14 +360,15 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   const limit = Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
 
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? homedir();
-  const sessions = await listRecentSessions(cwd, limit);
+  const agentId = ctx.sessions.getActiveAgentId(ctx.scope, ctx.agents.getDefaultId());
+  const sessions = await listRecentAgentSessions(cwd, agentId, limit);
   const currentSession = ctx.sessions.getRaw(ctx.scope);
   const entries = sessions.map((s) => ({
     sessionId: s.sessionId,
     preview: s.preview,
     relTime: formatRelTime(s.mtime),
     lineCount: s.lineCount,
-    current: s.sessionId === currentSession?.sessionId,
+    current: s.sessionId === (currentSession?.agents?.[agentId]?.sessionId ?? currentSession?.sessionId),
   }));
   const card = resumeCard(cwd, entries);
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
@@ -372,26 +376,72 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? homedir();
+  const agentId = ctx.sessions.getActiveAgentId(ctx.scope, ctx.agents.getDefaultId());
   ctx.activeRuns.interrupt(ctx.scope);
-  ctx.sessions.set(ctx.scope, sessionId, cwd);
+  ctx.sessions.setForAgent(ctx.scope, agentId, sessionId, cwd);
   await reply(
     ctx,
-    `✓ 已恢复会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
+    `✓ 已恢复 ${agentId} 会话 \`${sessionId.slice(0, 8)}…\`。接着发消息就行。`,
   );
 }
 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = ctx.workspaces.cwdFor(ctx.scope) ?? homedir();
   const sess = ctx.sessions.getRaw(ctx.scope);
+  const activeAgentId = ctx.sessions.getActiveAgentId(ctx.scope, ctx.agents.getDefaultId());
+  const agent = ctx.agents.get(activeAgentId);
+  const nativeSession = sess?.agents?.[activeAgentId];
   const card = statusCard({
     cwd,
-    sessionId: sess?.sessionId,
-    sessionStale: Boolean(sess && sess.cwd !== cwd),
-    agentName: ctx.agent.displayName,
+    sessionId:
+      nativeSession?.sessionId ??
+      (activeAgentId === 'claude' ? sess?.sessionId : undefined),
+    sessionStale: Boolean(nativeSession?.cwd && nativeSession.cwd !== cwd),
+    agentName: agent.displayName,
+    agentId: activeAgentId,
+    defaultAgentId: ctx.agents.getDefaultId(),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
   });
   await ctx.channel.send(ctx.msg.chatId, { card }, { replyTo: ctx.msg.messageId });
+}
+
+async function handleAgent(args: string, ctx: CommandContext): Promise<void> {
+  const sub = args.trim().toLowerCase();
+  const defaultId = ctx.agents.getDefaultId();
+  const currentId = ctx.sessions.getActiveAgentId(ctx.scope, defaultId);
+
+  if (!sub) {
+    const lines = await Promise.all(
+      ctx.agents.list().map(async ({ id, adapter, isDefault }) => {
+        const available = await adapter.isAvailable();
+        const marks = [
+          id === currentId ? '当前' : '',
+          isDefault ? '默认' : '',
+          available ? '可用' : '不可用',
+        ].filter(Boolean);
+        return `- \`${id}\` ${adapter.displayName} (${marks.join(' / ')})`;
+      }),
+    );
+    await reply(
+      ctx,
+      [`当前 agent: \`${currentId}\``, `实例默认: \`${defaultId}\``, '', ...lines, '', '用法: `/agent claude`、`/agent codex`、`/agent default`'].join('\n'),
+    );
+    return;
+  }
+
+  ctx.activeRuns.interrupt(ctx.scope);
+  if (sub === 'default') {
+    ctx.sessions.clearActiveAgentId(ctx.scope);
+    await reply(ctx, `✓ 当前会话已回到实例默认 agent: \`${defaultId}\`。已有上下文会保留。`);
+    return;
+  }
+  if (!isAgentId(sub)) {
+    await reply(ctx, '用法: `/agent claude`、`/agent codex`、`/agent default`');
+    return;
+  }
+  ctx.sessions.setActiveAgentId(ctx.scope, sub);
+  await reply(ctx, `✓ 当前会话已切换到 \`${sub}\`。已有上下文会保留。`);
 }
 
 async function handleStop(_args: string, ctx: CommandContext): Promise<void> {
@@ -622,7 +672,8 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
 
   const prompt = buildDoctorPrompt(args, logs);
-  const run = ctx.agent.run({
+  const agent = ctx.agents.get(ctx.agents.getDefaultId());
+  const run = agent.run({
     prompt,
     cwd: homedir(),
     stopGraceMs: getAgentStopGraceMs(ctx.controls.cfg),
@@ -840,6 +891,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
         appId,
         tenant,
         ctx.controls.cfg.preferences,
+        ctx.controls.cfg.agent,
       );
       await setSecret(secretKeyForApp(appId), appSecret);
       await saveConfig(newCfg, configPath);
@@ -896,6 +948,7 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     showToolCalls: getShowToolCalls(ctx.controls.cfg),
     maxConcurrentRuns: getMaxConcurrentRuns(ctx.controls.cfg),
     runIdleTimeoutMinutes: ms ? Math.round(ms / 60_000) : 0,
+    defaultAgent: getDefaultAgentId(ctx.controls.cfg),
     requireMentionInGroup: getRequireMentionInGroup(ctx.controls.cfg),
     allowedUsers: (access.allowedUsers ?? []).join(', '),
     allowedChats: (access.allowedChats ?? []).join(', '),
@@ -952,6 +1005,11 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       runIdleTimeoutMinutes = Math.min(120, Math.max(1, Math.floor(parsedIdle)));
     }
   }
+  const rawDefaultAgent = String(fv.default_agent ?? '').trim();
+  const defaultAgent = isAgentId(rawDefaultAgent)
+    ? rawDefaultAgent
+    : getDefaultAgentId(ctx.controls.cfg);
+
   // Parse require_mention_in_group. Empty / unexpected keeps current.
   const rawRequireMention = String(fv.require_mention_in_group ?? '').trim();
   let requireMentionInGroup: boolean;
@@ -1049,6 +1107,10 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       // (isUserAllowed / isAdmin both treat length===0 as unrestricted).
       access: { allowedUsers, allowedChats, admins },
     };
+    ctx.controls.cfg.agent = {
+      ...(ctx.controls.cfg.agent ?? {}),
+      default: defaultAgent,
+    };
 
     try {
       await saveConfig(ctx.controls.cfg, configPath);
@@ -1065,6 +1127,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
       showToolCalls,
       maxConcurrentRuns,
       runIdleTimeoutMinutes,
+      defaultAgent,
       requireMentionInGroup,
       allowedUsersCount: allowedUsers.length,
       allowedChatsCount: allowedChats.length,
@@ -1079,6 +1142,7 @@ async function submitConfig(ctx: CommandContext): Promise<void> {
         showToolCalls,
         maxConcurrentRuns,
         runIdleTimeoutMinutes,
+        defaultAgent,
         requireMentionInGroup,
         allowedUsers: allowedUsers.join(', '),
         allowedChats: allowedChats.join(', '),

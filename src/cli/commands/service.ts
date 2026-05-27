@@ -1,4 +1,4 @@
-import { ClaudeAdapter } from '../../agent/claude/adapter';
+import { AgentRegistry } from '../../agent/registry';
 import { isComplete } from '../../config/schema';
 import { loadConfig } from '../../config/store';
 import { daemonStderrPath, daemonStdoutPath } from '../../daemon/paths';
@@ -13,6 +13,7 @@ import { preFlightChecks } from '../preflight';
 export interface ServiceStartOptions {
   /** Skip lark-cli auto-install + bind during `start`. */
   skipCheckLarkCli?: boolean;
+  instance?: string;
 }
 
 /**
@@ -138,10 +139,10 @@ async function reportConnectAfter(
 
   const entry = await waitForServiceConnect(appId, beforePids);
   if (entry) {
-    const agent = new ClaudeAdapter();
     const verbZh = verb === 'started' ? '已启动' : '已重启';
+    const agentLabel = entry.agentId ?? (isComplete(cfg) ? new AgentRegistry(cfg).getDefaultId() : 'claude');
     console.log(
-      `✓ ${verbZh}  bot: ${entry.botName} (${entry.appId})  agent: ${agent.displayName} (${agent.id})  进程: ${entry.id}`,
+      `✓ ${verbZh}  bot: ${entry.botName} (${entry.appId})  agent: ${agentLabel}  进程: ${entry.id}`,
     );
     return;
   }

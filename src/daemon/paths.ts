@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { paths } from '../config/paths';
+import { instanceSuffix, paths } from '../config/paths';
 
 /**
  * Logical service name — used as the launchd label AND as the systemd
@@ -11,19 +11,23 @@ export const SERVICE_NAME = 'lark-channel-bridge.bot';
 
 // === macOS launchd ===
 
-export const LAUNCH_AGENT_LABEL = `ai.${SERVICE_NAME}`;
+export function launchAgentLabel(): string {
+  return `ai.${SERVICE_NAME}${instanceSuffix()}`;
+}
 
 /**
  * macOS convention: user LaunchAgents under `~/Library/LaunchAgents/`.
  * launchd discovers plists only from a few well-known paths.
  */
 export function launchAgentPlistPath(): string {
-  return join(homedir(), 'Library', 'LaunchAgents', `${LAUNCH_AGENT_LABEL}.plist`);
+  return join(homedir(), 'Library', 'LaunchAgents', `${launchAgentLabel()}.plist`);
 }
 
 // === Linux systemd (user units) ===
 
-export const SYSTEMD_UNIT_NAME = `${SERVICE_NAME}.service`;
+export function systemdUnitName(): string {
+  return `${SERVICE_NAME}${instanceSuffix()}.service`;
+}
 
 /**
  * Linux convention: user systemd units under
@@ -32,7 +36,7 @@ export const SYSTEMD_UNIT_NAME = `${SERVICE_NAME}.service`;
  */
 export function systemdUnitPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
-  return join(base, 'systemd', 'user', SYSTEMD_UNIT_NAME);
+  return join(base, 'systemd', 'user', systemdUnitName());
 }
 
 // === Windows Task Scheduler ===
@@ -42,7 +46,9 @@ export function systemdUnitPath(): string {
  * `LarkChannelBridge\Bot` would create a Bot task under a LarkChannelBridge
  * folder. We keep it flat for now.
  */
-export const WINDOWS_TASK_NAME = 'LarkChannelBridge.Bot';
+export function windowsTaskName(): string {
+  return `LarkChannelBridge.Bot${instanceSuffix()}`;
+}
 
 /**
  * The wrapper .cmd script schtasks invokes. schtasks `/TR` accepts a
@@ -50,7 +56,7 @@ export const WINDOWS_TASK_NAME = 'LarkChannelBridge.Bot';
  * override, which means wrapping in a script.
  */
 export function windowsLauncherCmdPath(): string {
-  return join(paths.appDir, 'daemon-launcher.cmd');
+  return join(paths.appDir, `daemon-launcher${instanceSuffix()}.cmd`);
 }
 
 // === Daemon log paths (platform-agnostic) ===

@@ -1,5 +1,5 @@
 import type { CardActionEvent, LarkChannel, NormalizedMessage } from '@larksuiteoapi/node-sdk';
-import type { AgentAdapter } from '../agent/types';
+import type { AgentRegistry } from '../agent/registry';
 import type { ActiveRuns } from '../bot/active-runs';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
@@ -10,11 +10,12 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 
 /** Marker key on a button's value object that flags the cardAction as
- * a callback that should be forwarded back to the agent (Claude) instead
+ * a callback that should be forwarded back to the active agent instead
  * of dispatched to a built-in command handler. The double-underscore
  * sigils make it virtually impossible to collide with normal payload
  * fields the agent might set.
  */
+const BRIDGE_CALLBACK_MARKER = '__bridge_cb';
 const CLAUDE_CALLBACK_MARKER = '__claude_cb';
 
 export interface CardDispatchDeps {
@@ -23,7 +24,7 @@ export interface CardDispatchDeps {
   sessions: SessionStore;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
-  agent: AgentAdapter;
+  agents: AgentRegistry;
   controls: Controls;
   pending: PendingQueue;
   chatModeCache: ChatModeCache;
@@ -71,12 +72,12 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     return;
   }
 
-  // Claude-driven callback: the button was rendered by claude itself via
-  // lark-cli, with `__claude_cb` set on the value. Forward the click back
-  // into the scope's pending queue so claude resumes its session and sees
+  // Agent-driven callback: the button was rendered by an agent via
+  // lark-cli, with a bridge marker set on the value. Forward the click back
+  // into the scope's pending queue so the agent resumes its session and sees
   // the click as a follow-up message, with full context of what it sent.
-  if (CLAUDE_CALLBACK_MARKER in payload) {
-    forwardToClaude(deps, payload, formValue, scope, threadId);
+  if (BRIDGE_CALLBACK_MARKER in payload || CLAUDE_CALLBACK_MARKER in payload) {
+    forwardToAgent(deps, payload, formValue, scope, threadId);
     return;
   }
 
@@ -92,7 +93,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     sessions: deps.sessions,
     workspaces: deps.workspaces,
     activeRuns: deps.activeRuns,
-    agent: deps.agent,
+    agents: deps.agents,
     controls: deps.controls,
     formValue,
     fromCardAction: true,
@@ -147,17 +148,21 @@ async function lookupMessageThreadId(
   }
 }
 
-function forwardToClaude(
+function forwardToAgent(
   deps: CardDispatchDeps,
   payload: Record<string, unknown>,
   formValue: Record<string, unknown> | undefined,
   scope: string,
   threadId: string | undefined,
 ): void {
-  // Strip the marker so claude only sees the meaningful fields it set.
-  const { [CLAUDE_CALLBACK_MARKER]: _marker, ...claudePayload } = payload;
+  // Strip the marker so the agent only sees the meaningful fields it set.
+  const {
+    [BRIDGE_CALLBACK_MARKER]: _bridgeMarker,
+    [CLAUDE_CALLBACK_MARKER]: _claudeMarker,
+    ...claudePayload
+  } = payload;
   const merged = formValue ? { ...claudePayload, form_value: formValue } : claudePayload;
-  log.info('cardAction', 'forward-claude', {
+  log.info('cardAction', 'forward-agent', {
     scope,
     payload: JSON.stringify(merged).slice(0, 200),
   });

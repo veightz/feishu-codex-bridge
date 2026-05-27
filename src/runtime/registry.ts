@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { paths } from '../config/paths';
+import { getInstance, paths } from '../config/paths';
+import type { AgentId } from '../config/schema';
 import type { TenantBrand } from '../config/schema';
 
 /**
@@ -28,6 +29,8 @@ export interface ProcessEntry {
   configPath: string;
   startedAt: string;
   version: string;
+  instance?: string;
+  agentId?: AgentId;
   /** Bot's display name (e.g. "尼莫"). Filled in by startChannel after the
    * WS handshake — undefined until the connection is up, or on processes
    * registered by older versions of the bridge. */
@@ -114,6 +117,7 @@ export interface RegisterArgs {
   tenant: TenantBrand;
   configPath: string;
   version: string;
+  agentId?: AgentId;
 }
 
 /**
@@ -133,6 +137,8 @@ export async function register(args: RegisterArgs): Promise<ProcessEntry> {
     configPath: args.configPath,
     startedAt: new Date().toISOString(),
     version: args.version,
+    ...(getInstance() ? { instance: getInstance() } : {}),
+    ...(args.agentId ? { agentId: args.agentId } : {}),
   };
   await writeAtomic([...live, entry], paths.processesFile);
   return entry;
@@ -153,7 +159,7 @@ export async function unregister(id: string): Promise<void> {
  */
 export async function updateEntry(
   id: string,
-  patch: Partial<Pick<ProcessEntry, 'appId' | 'tenant' | 'configPath' | 'botName'>>,
+  patch: Partial<Pick<ProcessEntry, 'appId' | 'tenant' | 'configPath' | 'botName' | 'agentId'>>,
 ): Promise<void> {
   const live = readAndPrune();
   let changed = false;

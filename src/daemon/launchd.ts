@@ -4,12 +4,13 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { dirname } from 'node:path';
 import {
-  LAUNCH_AGENT_LABEL,
   daemonLogDir,
   daemonStderrPath,
   daemonStdoutPath,
+  launchAgentLabel,
   launchAgentPlistPath,
 } from './paths';
+import { getInstance } from '../config/paths';
 
 export interface PlistInputs {
   /** Absolute path to the node binary that should run the bridge. */
@@ -29,17 +30,24 @@ export function buildPlist(inputs: PlistInputs): string {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  const instance = getInstance();
+  const instanceArgs = instance
+    ? `        <string>--instance</string>
+        <string>${escape(instance)}</string>
+`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${LAUNCH_AGENT_LABEL}</string>
+    <string>${launchAgentLabel()}</string>
     <key>ProgramArguments</key>
     <array>
         <string>${escape(inputs.nodePath)}</string>
         <string>${escape(inputs.bridgeEntryPath)}</string>
         <string>run</string>
+${instanceArgs}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -84,7 +92,7 @@ function userTarget(): string {
 }
 
 function serviceTarget(): string {
-  return `${userTarget()}/${LAUNCH_AGENT_LABEL}`;
+  return `${userTarget()}/${launchAgentLabel()}`;
 }
 
 interface LaunchctlResult {

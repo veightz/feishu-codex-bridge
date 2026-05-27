@@ -66,6 +66,8 @@ export interface StatusInfo {
   sessionId?: string;
   sessionStale: boolean;
   agentName: string;
+  agentId: string;
+  defaultAgentId: string;
   /** Session scope (= chatId or chatId:threadId in topic groups). */
   scope: string;
   /** Chat mode — used to label scope. */
@@ -86,7 +88,7 @@ export function statusCard(info: StatusInfo): object {
     `🧭 **scope**: ${scopeLine}`,
     `📁 **cwd**: \`${escapeCode(info.cwd)}\``,
     `🔗 **session**: ${sessionLine}`,
-    `🤖 **agent**: ${escapeMd(info.agentName)}`,
+    `🤖 **agent**: ${escapeMd(info.agentName)} (\`${escapeCode(info.agentId)}\`${info.agentId === info.defaultAgentId ? ', 默认' : ''})`,
   ];
   return shell('📊 当前状态', [
     divMd(lines.join('\n')),
@@ -95,6 +97,7 @@ export function statusCard(info: StatusInfo): object {
       { text: '🆕 新会话', value: { cmd: 'new' }, style: 'primary' },
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作空间', value: { cmd: 'ws.list' } },
+      { text: '🤖 Agent', value: { cmd: 'agent' } },
       { text: '💡 帮助', value: { cmd: 'help' } },
     ]),
   ]);
@@ -157,13 +160,14 @@ export function helpCard(): object {
         '- `/status` — 当前状态',
         '- `/stop` — 结束当前正在跑的任务（也可点卡片底部 ⏹ 终止 按钮）',
         '- `/timeout [N|off|default]` — 当前 session 的探活分钟数,`/config` 改全局默认',
+        '- `/agent [claude|codex|default]` — 查看或切换当前会话使用的 agent',
         '- `/ps` — 列出本机所有 bot,标识当前正在回复的那个',
         '- `/exit <id|#>` — 关掉指定 bot(用 `/ps` 看 id/序号)',
         '- `/reconnect` — 强制重连 WebSocket(网络抖动后 bot 没反应时用)',
-        '- `/doctor [描述]` — 把日志和描述喂给 Claude 自助诊断',
+        '- `/doctor [描述]` — 把日志和描述喂给默认 agent 自助诊断',
         '- `/help` — 本帮助',
         '',
-        '其他内容直接交给 Claude。',
+        '其他内容直接交给当前 agent。',
       ].join('\n'),
     ),
     HR,

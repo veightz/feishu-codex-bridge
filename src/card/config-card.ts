@@ -1,4 +1,5 @@
 import type { MessageReplyMode } from '../config/schema';
+import type { AgentId } from '../config/schema';
 
 export interface ConfigFormOpts {
   messageReply: MessageReplyMode;
@@ -7,6 +8,7 @@ export interface ConfigFormOpts {
   /** 0 means "disabled". */
   runIdleTimeoutMinutes: number;
   requireMentionInGroup: boolean;
+  defaultAgent: AgentId;
   /** Comma-separated open_id allowlist; empty string = unrestricted. */
   allowedUsers: string;
   /** Comma-separated chat_id allowlist; empty string = unrestricted. */
@@ -96,6 +98,21 @@ export function configFormCard(opts: ConfigFormOpts): object {
               default_value: String(opts.runIdleTimeoutMinutes),
               placeholder: { tag: 'plain_text', content: '0' },
               input_type: 'text',
+            },
+            {
+              tag: 'markdown',
+              content:
+                '\n**默认 Agent**\n' +
+                '_新会话默认使用哪个本地编码 agent。也可以在会话里用 `/agent` 临时切换_',
+            },
+            {
+              tag: 'select_static',
+              name: 'default_agent',
+              initial_option: opts.defaultAgent,
+              options: [
+                { text: { tag: 'plain_text', content: 'Claude Code' }, value: 'claude' },
+                { text: { tag: 'plain_text', content: 'Codex' }, value: 'codex' },
+              ],
             },
             {
               tag: 'markdown',
@@ -227,6 +244,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**工具调用显示**:\`${opts.showToolCalls ? 'show' : 'hide'}\`\n` +
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
+            `**默认 Agent**:\`${opts.defaultAgent}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
             '🔒 **访问控制**\n' +
             `**用户白名单**:${summarizeList(opts.allowedUsers)}\n` +
