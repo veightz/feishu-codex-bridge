@@ -97,6 +97,8 @@ Daemon logs go to `~/.lark-channel/logs/daemon-stdout.log` and `daemon-stderr.lo
 
 Use `--instance <name>` when you want separate robots or separate defaults on the same machine. Each named instance has its own config, sessions, workspaces, media, logs, and OS service name under `~/.lark-channel/instances/<name>/`; the process registry remains shared so `ps` can show all instances. A service instance binds one Feishu/Lark app and only responds for that app. Inside that instance, `/config` chooses the default agent, and `/agent` can override it for the current chat/topic without clearing the bridge transcript.
 
+Each instance also gets its own `lark-cli` profile: the default instance uses `bridge-default`, and named instances use `bridge-<name>` (for example, `codex-dev` → `bridge-codex-dev`). This lets Claude Bridge and Codex Bridge use different robot apps on the same machine without fighting over the global default profile. The agent prompt tells the agent to use `lark-cli --profile bridge-<name> ...`; do not manually bind multiple bridge instances to the same `lark-cli` profile.
+
 Practical local isolation recipe:
 
 ```bash

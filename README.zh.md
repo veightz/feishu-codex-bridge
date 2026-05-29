@@ -97,6 +97,8 @@ daemon 的 stdout / stderr 写到 `~/.lark-channel/logs/daemon-stdout.log` 和 `
 
 如果一台机器上要跑多个机器人或多个默认 agent，用 `--instance <name>`。每个命名实例都有自己的 config、sessions、workspaces、media、logs 和 OS 服务名，目录在 `~/.lark-channel/instances/<name>/`；进程注册中心仍然共享，所以 `ps` 能看到所有实例。一个服务实例只绑定一个飞书 / Lark 应用，也只响应这个应用。实例内部用 `/config` 配默认 agent，用 `/agent` 在当前 chat / 话题维度临时切换 agent，切换不会清空 bridge 保存的短上下文。
 
+每个实例也会绑定独立的 `lark-cli` profile：默认实例用 `bridge-default`，命名实例用 `bridge-<name>`（例如 `codex-dev` → `bridge-codex-dev`）。这样同一台机器上的 Claude Bridge、Codex Bridge 可以各自使用不同机器人 App，不会抢全局默认 profile。agent 提示里会要求使用 `lark-cli --profile bridge-<name> ...`；不要手动把多个 bridge 绑定到同一个 `lark-cli` profile。
+
 本地隔离测试建议这样跑：
 
 ```bash
