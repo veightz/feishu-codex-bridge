@@ -157,6 +157,7 @@ export class CodexAdapter implements AgentAdapter {
     const model = opts.model ?? this.model;
     const args = ['exec'];
     args.push('--json');
+    args.push('--skip-git-repo-check');
     if (model) args.push('--model', model);
     if (this.profile) args.push('--profile', this.profile);
     if (this.dangerouslyBypassApprovalsAndSandbox) {
