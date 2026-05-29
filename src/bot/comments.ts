@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import type { CommentEvent, LarkChannel } from '@larksuiteoapi/node-sdk';
 import type { AgentAdapter } from '../agent/types';
+import { larkCliProfileName } from '../config/paths';
 import { log } from '../core/logger';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -297,6 +298,7 @@ function buildCommentPrompt(target: ResolvedTarget, ctx: CommentContext): string
   // depends on the user's tenant, but feishu.cn / larksuite.com generic
   // hosts redirect properly within the tenant.
   const docUrl = `https://feishu.cn/${target.fileType}/${target.fileToken}`;
+  const larkCliProfile = larkCliProfileName();
   const parts: string[] = [];
   parts.push('我在飞书云文档里被 @了。文档信息：');
   parts.push(`- 链接：${docUrl}`);
@@ -314,7 +316,8 @@ function buildCommentPrompt(target: ResolvedTarget, ctx: CommentContext): string
   parts.push('');
   parts.push(
     '需要读文档内容时，可以用 lark-cli：\n' +
-      `  \`lark-cli docs +fetch --doc ${target.fileToken}\``,
+      `  \`lark-cli --profile ${larkCliProfile} docs +fetch --doc ${target.fileToken}\`\n` +
+      '不要使用裸 `lark-cli ...`，同一台机器可能同时运行多个 bridge 实例。',
   );
   parts.push('');
   parts.push(

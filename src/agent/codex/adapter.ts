@@ -10,6 +10,7 @@ export interface CodexAdapterOptions {
   binary?: string;
   model?: string;
   profile?: string;
+  larkCliProfile?: string;
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   dangerouslyBypassApprovalsAndSandbox?: boolean;
 }
@@ -27,6 +28,19 @@ const BRIDGE_INSTRUCTIONS = `# lark-channel-bridge 运行约定
 如果你用 lark-cli 发可交互卡片，并希望用户点击后回到同一 bridge 会话，按钮 callback value 里放 \`"__bridge_cb": true\`。旧的 \`"__claude_cb": true\` 也能兼容，但新卡片优先使用 \`__bridge_cb\`。
 `;
 
+function buildBridgeInstructions(larkCliProfile: string): string {
+  return `${BRIDGE_INSTRUCTIONS}
+
+## lark-cli profile
+
+本 bridge 实例绑定的 lark-cli profile 是 \`${larkCliProfile}\`。
+任何 lark-cli 调用都必须显式带上这个 profile，例如：
+\`lark-cli --profile ${larkCliProfile} im send-card --chat-id <chat_id> --card '<json>'\`
+
+不要使用裸 \`lark-cli ...\`，也不要切换或覆盖全局默认 profile；同一台机器可能同时运行 Claude / Codex 等多个 bridge，每个 bridge 都对应不同的飞书机器人 App。
+`;
+}
+
 export class CodexAdapter implements AgentAdapter {
   readonly id = 'codex';
   readonly displayName = 'Codex';
@@ -34,6 +48,7 @@ export class CodexAdapter implements AgentAdapter {
   private readonly binary: string;
   private readonly model?: string;
   private readonly profile?: string;
+  private readonly larkCliProfile: string;
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly dangerouslyBypassApprovalsAndSandbox: boolean;
 
@@ -41,6 +56,7 @@ export class CodexAdapter implements AgentAdapter {
     this.binary = opts.binary ?? 'codex';
     this.model = opts.model;
     this.profile = opts.profile;
+    this.larkCliProfile = opts.larkCliProfile ?? 'bridge-default';
     this.sandbox = opts.sandbox ?? 'workspace-write';
     this.dangerouslyBypassApprovalsAndSandbox =
       opts.dangerouslyBypassApprovalsAndSandbox === true;
@@ -55,11 +71,11 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   run(opts: AgentRunOptions): AgentRun {
-    const prompt = `${BRIDGE_INSTRUCTIONS}\n\n${opts.prompt}`;
+    const prompt = `${buildBridgeInstructions(this.larkCliProfile)}\n\n${opts.prompt}`;
     const args = this.buildArgs(prompt, opts);
     const child = spawn(this.binary, args, {
       cwd: opts.cwd,
-      env: { ...process.env, LARK_CHANNEL: '1' },
+      env: { ...process.env, LARK_CHANNEL: '1', LARK_CLI_PROFILE: this.larkCliProfile },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

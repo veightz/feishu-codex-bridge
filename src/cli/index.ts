@@ -107,7 +107,7 @@ const secrets = program
 
 secrets
   .command('get')
-  .description('Exec-provider protocol: read JSON request from stdin, write JSON response to stdout. Used by lark-cli config bind --source lark-channel.')
+  .description('Exec-provider protocol: read JSON request from stdin, write JSON response to stdout. Used by bridge-managed lark-cli profiles.')
   .option('--instance <name>', 'named bridge instance')
   .action(async (opts: { instance?: string }) => {
     configureInstance(opts.instance);

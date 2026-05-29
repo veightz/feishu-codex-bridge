@@ -75,7 +75,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
     console.log(`配置已保存到 ${configPath}\n`);
   }
 
-  await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli });
+  await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli, cfg });
 
   const agents = new AgentRegistry(cfg);
   const defaultAgent = agents.get(agents.getDefaultId());
@@ -153,6 +153,7 @@ export async function runStart(opts: StartOptions): Promise<void> {
       try {
         const next = await loadConfig(configPath);
         if (!isComplete(next)) throw new Error('config incomplete after change');
+        await preFlightChecks({ cfg: next });
         console.log(
           `[restart] connecting new bridge with appId=${next.accounts.app.id} tenant=${next.accounts.app.tenant}...`,
         );

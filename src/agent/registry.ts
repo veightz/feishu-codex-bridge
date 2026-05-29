@@ -1,5 +1,6 @@
 import type { AppConfig, AgentId } from '../config/schema';
 import { getDefaultAgentId } from '../config/schema';
+import { larkCliProfileName } from '../config/paths';
 import { ClaudeAdapter } from './claude/adapter';
 import { CodexAdapter } from './codex/adapter';
 import type { AgentAdapter } from './types';
@@ -10,9 +11,10 @@ export class AgentRegistry {
 
   constructor(cfg: AppConfig) {
     this.cfg = cfg;
+    const larkCliProfile = larkCliProfileName();
     this.agents = {
-      claude: new ClaudeAdapter(cfg.agent?.claude),
-      codex: new CodexAdapter(cfg.agent?.codex),
+      claude: new ClaudeAdapter({ ...cfg.agent?.claude, larkCliProfile }),
+      codex: new CodexAdapter({ ...cfg.agent?.codex, larkCliProfile }),
     };
   }
 

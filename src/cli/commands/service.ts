@@ -1,5 +1,5 @@
 import { AgentRegistry } from '../../agent/registry';
-import { isComplete } from '../../config/schema';
+import { isComplete, type AppConfig } from '../../config/schema';
 import { loadConfig } from '../../config/store';
 import { daemonStderrPath, daemonStdoutPath } from '../../daemon/paths';
 import {
@@ -74,13 +74,14 @@ function printServiceFailure(verb: 'started' | 'restarted', stderr: string): voi
   console.error(cleaned);
 }
 
-async function ensureBridgeConfigured(): Promise<void> {
+async function ensureBridgeConfigured(): Promise<AppConfig> {
   const cfg = await loadConfig();
   if (!isComplete(cfg)) {
     console.error('bot 还没配置 app 凭据。');
     console.error('请先运行 `run` 完成首次扫码向导,再回来 `start`。');
     process.exit(1);
   }
+  return cfg;
 }
 
 /**
@@ -160,12 +161,12 @@ async function reportConnectAfter(
  */
 export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<void> {
   const adapter = requireAdapter('start');
-  await ensureBridgeConfigured();
+  const cfg = await ensureBridgeConfigured();
   // Run the same lark-cli check as `bridge run` BEFORE writing the
   // service file — the user is in a TTY here and can answer the install
   // prompt. The daemon's own preflight (when launchd / systemd spawns
   // it) will be non-TTY and would silently skip the install.
-  await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli });
+  await preFlightChecks({ skipCheckLarkCli: opts.skipCheckLarkCli, cfg });
 
   await adapter.install();
 
@@ -245,6 +246,8 @@ export async function runServiceRestart(): Promise<void> {
     console.error('bot 还没在后台运行过。请先运行 `start` 启动。');
     process.exit(1);
   }
+  const cfg = await ensureBridgeConfigured();
+  await preFlightChecks({ cfg });
   if (adapter.isRunning()) {
     await reportConnectAfter('restarted', adapter.restart);
     return;

@@ -10,6 +10,7 @@ export interface ClaudeAdapterOptions {
   binary?: string;
   model?: string;
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+  larkCliProfile?: string;
 }
 
 type ClaudeChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -66,8 +67,8 @@ sender_name: ...
 
 你想发一张可交互的卡片让用户点选时：
 
-1. 用 \`lark-cli\` 把卡发到 \`bridge_context.chat_id\`：
-   \`lark-cli im send-card --chat-id <chat_id> --card '<json>'\`
+1. 用本实例的 \`lark-cli --profile <bridge-profile>\` 把卡发到 \`bridge_context.chat_id\`：
+   \`lark-cli --profile <bridge-profile> im send-card --chat-id <chat_id> --card '<json>'\`
 2. 卡片用 CardKit 2.0 schema（\`schema: "2.0"\`）。
 3. **如果你希望用户点按钮后回调到你（让你在同一会话里继续处理）**：
    - 按钮的 \`value\` 对象**必须**包含 \`__bridge_cb: true\`
@@ -87,21 +88,34 @@ sender_name: ...
 }
 \`\`\`
 
-## 飞书 OAuth 授权（\`lark-cli auth login\`）
+## 飞书 OAuth 授权（\`lark-cli --profile <bridge-profile> auth login\`）
 
 授权流程要让 \`lark-cli\` 进程一直活到用户在浏览器里点完为止。bridge 在你的 run 结束之后会回收 claude，**你 spawn 的任何后台 bash 也会跟着死**——所以授权必须用"前台阻塞"的方式跑：
 
 1. **仅在 p2p 里发起授权**。从 \`bridge_context.chat_type\` 看：
    - \`chat_type: p2p\` —— 正常按下面流程走。
-   - \`chat_type: group\`（含 topic 群）—— **不要**调 \`lark-cli auth login\`。device flow 把 \`verification_url\` 发到群里，谁先点谁拿走 token——会绑定到错的身份。正确做法是回复用户："授权要在私聊里做，请单独私信我。"
-2. **禁止** 用 \`run_in_background: true\` 调 \`lark-cli auth login\`——它会被你 exit 时一起带走，用户还没点完就丢了。
+   - \`chat_type: group\`（含 topic 群）—— **不要**调 \`lark-cli --profile <bridge-profile> auth login\`。device flow 把 \`verification_url\` 发到群里，谁先点谁拿走 token——会绑定到错的身份。正确做法是回复用户："授权要在私聊里做，请单独私信我。"
+2. **禁止** 用 \`run_in_background: true\` 调 \`lark-cli --profile <bridge-profile> auth login\`——它会被你 exit 时一起带走，用户还没点完就丢了。
 3. **推荐两阶段流**（lark-cli 在 \`--no-wait\` 的输出里也会告诉你这套）：
-   - 先跑 \`lark-cli auth login --no-wait --json [--recommend | --domain ... | --scope ...]\`，**这一步秒返回**，stdout 里有 \`verification_url\` 和 \`device_code\`。
+   - 先跑 \`lark-cli --profile <bridge-profile> auth login --no-wait --json [--recommend | --domain ... | --scope ...]\`，**这一步秒返回**，stdout 里有 \`verification_url\` 和 \`device_code\`。
    - 把 \`verification_url\` **原样**用代码块发给用户（不要 Markdown 链接化、不要 URL 编码）。
-   - 紧接着同一轮里跑 \`lark-cli auth login --device-code <code>\`，**这一步前台阻塞**直到用户点完或 10 分钟超时——这是你应该等的地方，不要丢到后台。
+   - 紧接着同一轮里跑 \`lark-cli --profile <bridge-profile> auth login --device-code <code>\`，**这一步前台阻塞**直到用户点完或 10 分钟超时——这是你应该等的地方，不要丢到后台。
 4. 你前台阻塞期间，用户发的新消息 bridge 会自动排队，**不会打断你**；等你 tool_result 一回来，下一批消息再进来。所以放心阻塞。
 5. 如果用户中途想取消，他们会发 \`/stop\`——那时被 kill 是预期行为，不用兜底。
 `;
+
+function buildBridgeSystemPrompt(larkCliProfile: string): string {
+  return `${BRIDGE_SYSTEM_PROMPT}
+
+## lark-cli profile
+
+本 bridge 实例绑定的 lark-cli profile 是 \`${larkCliProfile}\`。
+任何 lark-cli 调用都必须显式带上这个 profile，例如：
+\`lark-cli --profile ${larkCliProfile} im send-card --chat-id <chat_id> --card '<json>'\`
+
+不要使用裸 \`lark-cli ...\`，也不要切换或覆盖全局默认 profile；同一台机器可能同时运行 Claude / Codex 等多个 bridge，每个 bridge 都对应不同的飞书机器人 App。
+`;
+}
 
 export class ClaudeAdapter implements AgentAdapter {
   readonly id = 'claude';
@@ -110,11 +124,13 @@ export class ClaudeAdapter implements AgentAdapter {
   private readonly binary: string;
   private readonly model?: string;
   private readonly permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+  private readonly larkCliProfile: string;
 
   constructor(opts: ClaudeAdapterOptions = {}) {
     this.binary = opts.binary ?? 'claude';
     this.model = opts.model;
     this.permissionMode = opts.permissionMode;
+    this.larkCliProfile = opts.larkCliProfile ?? 'bridge-default';
   }
 
   async isAvailable(): Promise<boolean> {
@@ -135,14 +151,14 @@ export class ClaudeAdapter implements AgentAdapter {
       '--permission-mode',
       opts.permissionMode ?? this.permissionMode ?? 'bypassPermissions',
       '--append-system-prompt',
-      BRIDGE_SYSTEM_PROMPT,
+      buildBridgeSystemPrompt(this.larkCliProfile),
     ];
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.model ?? this.model) args.push('--model', opts.model ?? this.model!);
 
     const child = spawn(this.binary, args, {
       cwd: opts.cwd,
-      env: { ...process.env, LARK_CHANNEL: '1' },
+      env: { ...process.env, LARK_CHANNEL: '1', LARK_CLI_PROFILE: this.larkCliProfile },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

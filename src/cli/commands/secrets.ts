@@ -12,7 +12,7 @@ import { getSecret, listSecretIds, removeSecret, setSecret } from '../../config/
  *    protocol): `lark-channel-bridge secrets get` reads a JSON-RPC request
  *    from stdin and writes the decrypted secret to stdout. This is what
  *    `accounts.app.secret = { source: "exec", ... }` resolves through when
- *    lark-cli binds against ~/.lark-channel/config.json.
+ *    lark-cli consumes a bridge config or a bridge-generated profile.
  */
 
 interface ExecRequest {

@@ -40,6 +40,10 @@ export function instanceSuffix(): string {
   return currentInstance ? `.${currentInstance}` : '';
 }
 
+export function larkCliProfileName(): string {
+  return currentInstance ? `bridge-${currentInstance}` : 'bridge-default';
+}
+
 function normalizeInstance(instance: string | undefined): string | undefined {
   const value = instance?.trim();
   if (!value || value === 'default') return undefined;
